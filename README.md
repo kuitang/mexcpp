@@ -12,6 +12,12 @@ The classes are fully templatized, do not copy memory, and do not
 check bounds unless requested (forthcoming). Therefore, with
 optimization enabled, the wrapper should add no runtime penalty.
 
+Typechecking (mxGetClassID) is enabled by default, but can be
+disabled at your choice/risk if you need the performance.
+
+Since storage models for MATLAB matrices are simple, future
+integration for Eigen and/or Armadillo should not be difficult.
+
 # Requirements
 This project is in its infancy, but since the basic functionality
 works, I wanted to share it as soon as possible. You will need a
@@ -33,12 +39,15 @@ Let `pRhs` be the input pointer to mexFunction. Then:
  - Homogeneous cell arrays are currently supported. If we have a
    cell array of double matrices (all of which could have different
    dimensions), `CellMat<Mat<double> > cm(pRhs[i])`
-    - To get the linear entry i, `auto entry = cm.get(i)`
-      and entry has type `Mat<double>`
+    - To get the linear entry i, `auto entry = cm[i]`
+      and entry has type `Mat<double>`. Subscript indexing is also
+      supported, as with all other matrices.
     - The cell array template can take any type, so you can have
       cell arrays of cell arrays of structure arrays with
       `CellMat<CellMat<StructMat> > > nestedCM`
- - Structure arrays. Interface to be finalized; see mexcpp_test.cpp.
+ - Structure arrays can be indexed like
+   `auto m = sa(r,c).f<Mat<double> >("m")`  You can also index a field
+   by number, and an entry in the matrix itself as linear index.
 
 [1]: http://dirk.eddelbuettel.com/code/rcpp.html
 [2]: http://www.nr.com/nr3_matlab.html

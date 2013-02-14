@@ -52,12 +52,17 @@ namespace mexcpp {
 
   inline mxClassID ty(const mxArray *p) {return mxGetClassID(p);}
 
+#ifdef NTYPECHECK
+  template<class T>
+  inline void checkTypeOrErr(const mxArray *m) { }
+#else
   template<class T>
   inline void checkTypeOrErr(const mxArray *m) {
     if (mxGetClassID(m) != ty<T>()) {
       mexErrMsgTxt("Wrong type");
     }
   }
+#endif
 
   // Scalar library
   // just a placeholder
@@ -68,6 +73,16 @@ namespace mexcpp {
   const T &scalar(const mxArray *prhs) {
     checkTypeOrErr<T>(prhs);
     return *(static_cast<T*>(mxGetData(prhs)));
+  }
+
+  // This function copies memory. It is expected to be used for small
+  // user-supplied strings.
+  std::string str(const mxArray *prhs) {
+    checkTypeOrErr<char>(prhs);
+    char *s = mxArrayToString(prhs);
+    std::string ret(s);
+    mxFree(s);
+    return ret;
   }
 
   // TODO: Check for memory allocation error (when running outside of
@@ -92,7 +107,7 @@ namespace mexcpp {
     size_t N, M, numEl;
 
     BaseMat(const mxArray *p) : pm(p) {
-      mexPrintf("BaseMat: p = %lx\n", p);
+      //mexPrintf("BaseMat: p = %lx\n", p);
       N = mxGetN(p);
       M = mxGetM(p);
       numEl = N * M;
@@ -123,9 +138,9 @@ namespace mexcpp {
   struct CellMat : public BaseMat {
     CellMat(const mxArray *p) : BaseMat(p) { checkTypeOrErr<mxCell>(p); }
 
-    mxArray *operator[](size_t ind) { return mxGetCell(pm, ind); }
-    CellT get(size_t ind) { return CellT(operator[](ind)); }
-    CellT get(size_t r, size_t c) { return CellT(operator[](sub2ind(r, c))); }
+    mxArray *getPtr(size_t ind) { return mxGetCell(pm, ind); }
+    CellT operator[](size_t ind) { return CellT(getPtr(ind)); }
+    CellT operator()(size_t r, size_t c) { return CellT(getPtr(sub2ind(r, c))); }
   };
 
   // For use in StructMat and StructNDArray
@@ -155,11 +170,9 @@ namespace mexcpp {
       return f;
     }
 
-    template <class F> mxArray *operator[](F f) { return field(f); }
-
     // Get an instantiated field
-    template <class T, class F> T getField(F f) { return T(field(f)); }
-    template <class S, class F> S getScalarField(F f) { return scalar<S>(field(f)); }
+    template <class T, class F> T f(F fn) { return T(field(fn)); }
+    template <class S, class F> S sf(F fn) { return scalar<S>(field(fn)); }
   };
 
   struct StructMat : public BaseMat {
@@ -170,8 +183,8 @@ namespace mexcpp {
       nFields = mxGetNumberOfFields(p);
     }
 
-    Entry entry(size_t ind) { return Entry(pm, ind); }
-    Entry operator()(size_t r, size_t c) { return entry(sub2ind(r,c)); }
+    Entry operator[](size_t ind) { return Entry(pm, ind); }
+    Entry operator()(size_t r, size_t c) { return (*this)[(sub2ind(r,c))]; }
   };
 
   /*
