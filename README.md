@@ -12,6 +12,9 @@ The classes are fully templatized, do not copy memory, and do not
 check bounds unless requested (forthcoming). Therefore, with
 optimization enabled, the wrapper should add no runtime penalty.
 
+Typechecking (mxGetClassID) is enabled by default, but can be
+disabled at your choice/risk if you need the performance.
+
 # Requirements
 This project is in its infancy, but since the basic functionality
 works, I wanted to share it as soon as possible. You will need a
