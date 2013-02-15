@@ -1,6 +1,6 @@
 /* mexcpp.h -- Seamless MATLAB and C++ Integration
  *
- * This file wraps MATLAB datatypes (arrays, structures, cell arrays) in C++
+ * This file wraps MATLAB datatypes (arrays, classures, cell arrays) in C++
  * template classes. Numeric arrays can be further wrapped into Eigen.
  *
  * This version does not support ownership: the classes are intended to be used
@@ -21,6 +21,8 @@
 #include <stdint.h>
 #include <complex>
 #include <exception>
+#include <vector>
+#include <string>
 
 #include "mex.h"
 #include "matrix.h"
@@ -45,8 +47,8 @@ namespace mexcpp {
   }
 
   // Symbolic types
-  struct mxCell;
-  struct mxStruct;
+  class mxCell;
+  class mxStruct;
   template<> inline mxClassID ty<mxCell>() {return mxCELL_CLASS;}
   template<> inline mxClassID ty<mxStruct>() {return mxSTRUCT_CLASS;}
 
@@ -65,14 +67,18 @@ namespace mexcpp {
 #endif
 
   // Scalar library
-  // just a placeholder
-  template<class T>
-  struct Scalar { };
 
   template<class T>
   const T &scalar(const mxArray *prhs) {
     checkTypeOrErr<T>(prhs);
     return *(static_cast<T*>(mxGetData(prhs)));
+  }
+
+  template<class T>
+  mxArray *scalar(const T &x) {
+    mxArray *pm = mxCreateNumericMatrix(1, 1, ty<T>(), mxREAL);
+    *(static_cast<T*>(mxGetData(pm))) = x;
+    return pm;
   }
 
   // This function copies memory. It is expected to be used for small
@@ -103,29 +109,47 @@ namespace mexcpp {
 
   // TODO: Check the generated code
   struct BaseMat {
-    const mxArray *pm;
-    size_t N, M, numEl;
+    size_t N, M, length;
 
-    BaseMat(const mxArray *p) : pm(p) {
+    BaseMat(const mxArray *p) : pm(const_cast<mxArray *>(p)) {
       //mexPrintf("BaseMat: p = %lx\n", p);
       N = mxGetN(p);
       M = mxGetM(p);
-      numEl = N * M;
+      length = N * M;
     }
 
+    BaseMat(size_t N_, size_t M_) : pm(0), N(N_), M(M_), length(N_ * M_) { }
+
+    // Conversion cast operator
+    operator mxArray *() { return pm; }
+
     size_t sub2ind(size_t r, size_t c) { return c*N + r; }
+
+  protected:
+    mxArray *pm;
   };
 
   // TODO: Specialize for a complex!
   template<class T>
   struct Mat : public BaseMat {
-    T *re;
     int complexity;
+    T *re;
 
+    // Construct from MATLAB pointer
     Mat(const mxArray *p) : BaseMat(p) {
       checkTypeOrErr<T>(p);
       re = static_cast<T *>(mxGetData(p));
     }
+
+    // Construct our own (in MATLAB's memory)
+    Mat(size_t rows, size_t cols) : BaseMat(rows, cols) {
+      pm = mxCreateNumericMatrix(rows, cols, ty<T>(), mxREAL);
+      re = static_cast<T *>(mxGetData(pm));
+    }
+
+    // Pointer cast operator. Only defined for numeric arrays.
+    // Allows usage in cases where e.g. double *vec is expected
+    operator T*() { return re; }
 
     // NO RANGE CHECKING!
     T *col(size_t c) { return re + sub2ind(0, c); }
@@ -133,30 +157,48 @@ namespace mexcpp {
     T &operator()(size_t r, size_t c) { return re[sub2ind(r,c)]; }
   };
 
-  // Homogeneous cell array (Mat, CellMat, StructMat, etc.)
+  // Homogeneous cell array (Mat, CellMat, classMat, etc.)
   template<class CellT>
   struct CellMat : public BaseMat {
     CellMat(const mxArray *p) : BaseMat(p) { checkTypeOrErr<mxCell>(p); }
 
-    mxArray *getPtr(size_t ind) { return mxGetCell(pm, ind); }
-    CellT operator[](size_t ind) { return CellT(getPtr(ind)); }
-    CellT operator()(size_t r, size_t c) { return CellT(getPtr(sub2ind(r, c))); }
+    // Construct our own (in MATLAB's memory)
+    CellMat(size_t rows, size_t cols) : BaseMat(rows, cols) {
+      pm = mxCreateCellMatrix(rows, cols);
+    }
+
+    template<class T>
+    void set(size_t ind, T x) { mxSetCell(pm, ind, x); }
+    template<class S>
+    void setS(size_t ind, S x) { mxSetCell(pm, ind, scalar(x)); }
+
+    template<class T>
+    void set(size_t r, size_t c, T x) { set(sub2ind(r, c), x); }
+    template<class S>
+    void setS(size_t r, size_t c, S x) { setS(sub2ind(r, c), x); }
+
+    mxArray *ptr(size_t ind) { return mxGetCell(pm, ind); }
+    mxArray *ptr(size_t r, size_t c) { return ptr(sub2ind(r, c)); }
+
+    CellT operator[](size_t ind) { return CellT(ptr(ind)); }
+    CellT operator()(size_t r, size_t c) { return CellT(ptr(sub2ind(r, c))); }
   };
 
-  // For use in StructMat and StructNDArray
+  // For use in classMat and classNDArray. Just stores a pointer to
+  // mxArray (a struct array) and in index.
   struct Entry {
-    const mxArray *pmm;
-    size_t ind;
+    mxArray *pmm;
+    mwIndex ind;
 
-    Entry(const mxArray *pmm_, size_t ind_) : pmm(pmm_), ind(ind_) {
+    Entry(mxArray *pmm_, mwIndex ind_) : pmm(pmm_), ind(ind_) {
       //mexPrintf("Entry constructed; pmm = %lx ,ind = %d\n", pmm, ind);
     }
 
-    mxArray *field(size_t fnum) {
+    mxArray *field(mwIndex fnum) {
       //mexPrintf("field: pmm = %x, ind = %d, fnum = %d\n", pmm, ind, fnum);
       mxArray *f = mxGetFieldByNumber(pmm, ind, fnum);
       if (f == 0) {
-        mexErrMsgIdAndTxt("mexcpp:field", "Field %d of index %d of struct matrix %lx was invalid.\n", fnum, ind, pmm);
+        mexErrMsgIdAndTxt("mexcpp:field", "Field %d of index %d of class matrix %lx was invalid.\n", fnum, ind, pmm);
       }
       return f;
     }
@@ -165,14 +207,31 @@ namespace mexcpp {
       //mexPrintf("field: pmm = %x, ind = %d, fname = %s\n", pmm, ind, fname);
       mxArray *f = mxGetField(pmm, ind, fname);
       if (f == 0) {
-        mexErrMsgIdAndTxt("mexcpp:field", "Field %s of index %d of struct matrix %lx was invalid.\n", fname, ind, pmm);
+        mexErrMsgIdAndTxt("mexcpp:field", "Field %s of index %d of class matrix %lx was invalid.\n", fname, ind, pmm);
       }
       return f;
     }
 
     // Get an instantiated field
-    template <class T, class F> T f(F fn) { return T(field(fn)); }
-    template <class S, class F> S sf(F fn) { return scalar<S>(field(fn)); }
+    template <class T, class F> T get(F fn) { return T(field(fn)); }
+    template <class S, class F> S getS(F fn) { return scalar<S>(field(fn)); }
+
+    template <class T> void set(const char *fn, T x) {
+      mxSetField(pmm, ind, fn, x);
+    }
+
+    template <class S> void setS(const char *fn, S x) {
+      mxSetField(pmm, ind, fn, scalar<S>(x));
+    }
+
+    template <class T> void set(mwIndex fi, T x) {
+      mxSetFieldByNumber(pmm, ind, fi, x);
+    }
+
+    template <class S> void setS(mwIndex fi, S x) {
+      mxSetFieldByNumber(pmm, ind, fi, scalar<S>(x));
+    }
+
   };
 
   struct StructMat : public BaseMat {
@@ -183,8 +242,52 @@ namespace mexcpp {
       nFields = mxGetNumberOfFields(p);
     }
 
+    StructMat(size_t rows, size_t cols, std::vector<std::string> fieldNames) :
+      BaseMat(rows, cols) {
+      nFields = fieldNames.size();
+      const char *fns[nFields];
+
+      int i = 0;
+      for (const auto &fn : fieldNames) {
+        fns[i] = fn.c_str();
+        i++;
+      }
+
+      pm = mxCreateStructMatrix(rows, cols, nFields, fns);
+    }
+
     Entry operator[](size_t ind) { return Entry(pm, ind); }
     Entry operator()(size_t r, size_t c) { return (*this)[(sub2ind(r,c))]; }
+  };
+
+  // Compressed sparse column sparse matrix (MATLAB's format)
+  struct SparseMat : public BaseMat {
+    void construct(const mxArray *pm) {
+      if (!mxIsDouble(pm) || !mxIsSparse(pm)) {
+        mexErrMsgIdAndTxt("SparseMat:type", "matrix pm must be double and sparse");
+      }
+
+      N = mxGetN(pm);
+      M = mxGetM(pm);
+      nzMax = mxGetNzmax(pm);
+      pr = mxGetPr(pm);
+      ir = mxGetIr(pm);
+      jc = mxGetJc(pm);
+    }
+
+    size_t nzMax;
+    double *pr;
+    int *ir, *jc;
+
+    // Grab from MATLAB
+    SparseMat(mxArray *pm) : BaseMat(pm) { construct(pm); }
+
+    // Construct our own
+    SparseMat(size_t rows, size_t cols, size_t nnz) :
+      BaseMat(rows, cols) {
+      pm = mxCreateSparse(rows, cols, nnz, mxREAL);
+      construct(pm);
+    }
   };
 
   /*
@@ -192,7 +295,7 @@ namespace mexcpp {
   class NDArray {
     mxArray *pm;
     int complexity;
-    size_t nDims, numEl;
+    size_t nDims, length;
     size_t *dims;
     T *re;
 
@@ -200,7 +303,7 @@ namespace mexcpp {
       re = mxGetData(p);
       nDims = mxGetNumberOfDimensions(pm);
       dims  = mxGetDimensions(p);
-      numEl = mxGetNumberOfElements(pm);
+      length = mxGetNumberOfElements(pm);
     }
 
     T &operator[](size_t ind) {
