@@ -1,10 +1,12 @@
 // Run this line in MATLAB:
-// [od, ocm, osm] = mexcpp_test(3, 'c', [1 2 3], single([1 2; 3 4]), {[1 2], [1 2; 3 4]}, struct('f0', [10 20; 30 40], 'f1', 52, 'f2', int32(99), 'f3', 'blahblah'))
+// [od, os, ocm, osm] = mexcpp_test(3, 'c', 'string', [1 2 3], single([1 2; 3 4]), {[1 2], [1 2; 3 4]}, struct('f0', [10 20; 30 40], 'f1', 52, 'f2', int32(99), 'f3', 'blahblah'))
 #include "mexcpp.h"
+#include <string>
 
 enum {
   iDouble,
   iChar,
+  iStr,
   iDoubleVector,
   iSingleMatrix,
   iCellMat,
@@ -14,6 +16,7 @@ enum {
 
 enum {
   oDoubleMatrix,
+  oString,
   oCellMat,
   oStructMat,
   nO
@@ -36,8 +39,11 @@ void mexFunction(int nOut, mxArray *pOut[], int nIn, const mxArray *pIn[]) {
   double d = scalar<double>(pIn[iDouble]);
   mexPrintf("Double scalar read; d = %g\n", d);
 
-  char c   = scalar<char>(pIn[iChar]);
+  char c = scalar<char>(pIn[iChar]);
   mexPrintf("Char scalar read; c = %c\n", c);
+
+  std::string s = scalar<std::string>(pIn[iStr]);
+  mexPrintf("String scalar read; s = %s\n", s.c_str());
 
   Mat<double> dv(pIn[iDoubleVector]);
   mexPrintf("Double vector read; N = %d, M = %d, end = %g\n", dv.N, dv.M, dv[dv.length - 1]);
@@ -63,6 +69,8 @@ void mexFunction(int nOut, mxArray *pOut[], int nIn, const mxArray *pIn[]) {
     auto f3 = str(sm[i].field("f3"));
     mexPrintf("Entry %d had f0 = [%d x %d] f1 = %g f2 = %d f3 = %s\n", i, f0.N, f0.M, f1, f2, f3.c_str());
   }
+
+  pOut[oString] = scalar<std::string>("String output");
 
   // Making stuff
   Mat<double> om(2,2);

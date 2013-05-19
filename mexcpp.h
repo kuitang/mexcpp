@@ -9,10 +9,10 @@
  *
  * TODO: Support complex!
  *
- * Version 0.1
+ * Version 0.2 -- compiles on 4.6.3, no C++11 needed. scalar supports string.
  * Copyright (c) 2013 Kui Tang <kuitang@gmail.com>
  *
- * Inspired by Rcpp nr3matlab.h
+ * Inspired by Rcpp and nr3matlab.h
  */
 
 #pragma once
@@ -68,18 +68,32 @@ namespace mexcpp {
 
   // Scalar library
 
+  // Extract a scalar from a MATLAB pointer
   template<class T>
-  const T &scalar(const mxArray *prhs) {
+  T scalar(const mxArray *prhs) {
     checkTypeOrErr<T>(prhs);
     return *(static_cast<T*>(mxGetData(prhs)));
   }
 
+  template<>
+  std::string scalar(const mxArray *prhs) {
+    return std::string(mxArrayToString(prhs));
+  }
+
+  // Set a MATLAB pointer from a scalar
   template<class T>
   mxArray *scalar(const T &x) {
     mxArray *pm = mxCreateNumericMatrix(1, 1, ty<T>(), mxREAL);
     *(static_cast<T*>(mxGetData(pm))) = x;
     return pm;
   }
+
+  template<>
+  mxArray *scalar(const std::string &s) {
+    mxArray *pm = mxCreateString(s.c_str());
+    return pm;
+  }
+
 
   // This function copies memory. It is expected to be used for small
   // user-supplied strings.
@@ -109,21 +123,22 @@ namespace mexcpp {
 
   // TODO: Check the generated code
   struct BaseMat {
+    // M is rows, N is cols
     size_t N, M, length;
 
     BaseMat(const mxArray *p) : pm(const_cast<mxArray *>(p)) {
       //mexPrintf("BaseMat: p = %lx\n", p);
-      N = mxGetN(p);
       M = mxGetM(p);
+      N = mxGetN(p);
       length = N * M;
     }
 
-    BaseMat(size_t N_, size_t M_) : pm(0), N(N_), M(M_), length(N_ * M_) { }
+    BaseMat(size_t M_, size_t N_) : pm(0), M(M_), N(N_), length(N_ * M_) { }
 
     // Conversion cast operator
     operator mxArray *() { return pm; }
 
-    size_t sub2ind(size_t r, size_t c) { return c*N + r; }
+    inline size_t sub2ind(size_t r, size_t c) { return c*M + r; }
 
   protected:
     mxArray *pm;
@@ -147,6 +162,30 @@ namespace mexcpp {
       re = static_cast<T *>(mxGetData(pm));
     }
 
+    // Construct from existing array (copy to MATLAB's memory)
+    Mat(size_t rows, size_t cols, T *p) : BaseMat(rows, cols) {
+      pm = mxCreateNumericMatrix(rows, cols, ty<T>(), mxREAL);
+      re = static_cast<T *>(mxGetData(pm));
+      std::copy(p, p + rows*cols, re);
+    }
+
+    // Construct from existing std::vector (copy to MATLAB's memory)
+    Mat(const std::vector<T> v, bool colMat=true) : BaseMat(0, 0) {
+      length = v.size();
+      if (colMat) {
+        M = length;
+        N = 1;
+      } else {
+        M = 1;
+        N = length;
+      }
+
+      pm = mxCreateNumericMatrix(M, N, ty<T>(), mxREAL);
+      re = static_cast<T *>(mxGetData(pm));
+      std::copy(v.data(), v.data() + v.size(), re);
+    }
+
+
     // Pointer cast operator. Only defined for numeric arrays.
     // Allows usage in cases where e.g. double *vec is expected
     operator T*() { return re; }
@@ -168,14 +207,14 @@ namespace mexcpp {
     }
 
     template<class T>
-    void set(size_t ind, T x) { mxSetCell(pm, ind, x); }
+    void set(size_t ind, const T &x) { mxSetCell(pm, ind, const_cast<T &>(x)); }
     template<class S>
-    void setS(size_t ind, S x) { mxSetCell(pm, ind, scalar(x)); }
+    void setS(size_t ind, const S &x) { mxSetCell(pm, ind, scalar(x)); }
 
     template<class T>
-    void set(size_t r, size_t c, T x) { set(sub2ind(r, c), x); }
+    void set(size_t r, size_t c, const T &x) { set(sub2ind(r, c), x); }
     template<class S>
-    void setS(size_t r, size_t c, S x) { setS(sub2ind(r, c), x); }
+    void setS(size_t r, size_t c, const S &x) { setS(sub2ind(r, c), x); }
 
     mxArray *ptr(size_t ind) { return mxGetCell(pm, ind); }
     mxArray *ptr(size_t r, size_t c) { return ptr(sub2ind(r, c)); }
@@ -198,7 +237,7 @@ namespace mexcpp {
       //mexPrintf("field: pmm = %x, ind = %d, fnum = %d\n", pmm, ind, fnum);
       mxArray *f = mxGetFieldByNumber(pmm, ind, fnum);
       if (f == 0) {
-        mexErrMsgIdAndTxt("mexcpp:field", "Field %d of index %d of class matrix %lx was invalid.\n", fnum, ind, pmm);
+        mexErrMsgIdAndTxt("mexcpp:field", "Field %d of index %d of matrix %lx was invalid.\n", fnum, ind, pmm);
       }
       return f;
     }
@@ -207,7 +246,7 @@ namespace mexcpp {
       //mexPrintf("field: pmm = %x, ind = %d, fname = %s\n", pmm, ind, fname);
       mxArray *f = mxGetField(pmm, ind, fname);
       if (f == 0) {
-        mexErrMsgIdAndTxt("mexcpp:field", "Field %s of index %d of class matrix %lx was invalid.\n", fname, ind, pmm);
+        mexErrMsgIdAndTxt("mexcpp:field", "Field %s of index %d of matrix %lx was invalid.\n", fname, ind, pmm);
       }
       return f;
     }
@@ -247,10 +286,8 @@ namespace mexcpp {
       nFields = fieldNames.size();
       const char *fns[nFields];
 
-      int i = 0;
-      for (const auto &fn : fieldNames) {
-        fns[i] = fn.c_str();
-        i++;
+      for (int i = 0; i < fieldNames.size(); i++) {
+        fns[i] = fieldNames[i].c_str();
       }
 
       pm = mxCreateStructMatrix(rows, cols, nFields, fns);
@@ -258,6 +295,27 @@ namespace mexcpp {
 
     Entry operator[](size_t ind) { return Entry(pm, ind); }
     Entry operator()(size_t r, size_t c) { return (*this)[(sub2ind(r,c))]; }
+
+    // Syntactic sugar; access the first element.
+    // Deals with the common use case with a 1x1 "matrix".
+    template <class T> void set(const char *fn, T x) {
+      (*this)[0].set(fn, x);
+    }
+
+    template <class S> void setS(const char *fn, S x) {
+      (*this)[0].setS(fn, x);
+    }
+
+    template <class T> void set(mwIndex fi, T x) {
+      (*this)[0].set(fi, x);
+    }
+
+    template <class S> void setS(mwIndex fi, S x) {
+      (*this)[0].set(fi, x);
+    }
+
+    template <class T, class F> T get(F fn) { return (*this)[0].get<T>(fn); }
+    template <class S, class F> S getS(F fn) { return (*this)[0].getS<S>(fn); }
   };
 
   // Compressed sparse column sparse matrix (MATLAB's format)
@@ -277,7 +335,7 @@ namespace mexcpp {
 
     size_t nzMax;
     double *pr;
-    int *ir, *jc;
+    mwIndex *ir, *jc;
 
     // Grab from MATLAB
     SparseMat(mxArray *pm) : BaseMat(pm) { construct(pm); }
