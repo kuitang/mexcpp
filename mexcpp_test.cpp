@@ -63,10 +63,10 @@ void mexFunction(int nOut, mxArray *pOut[], int nIn, const mxArray *pIn[]) {
   StructMat sm(pIn[iStructMat]);
   mexPrintf("Structure matrix read; N = %d, M = %d, nFields = %d\n", sm.N, sm.M, sm.nFields);
   for (int i = 0; i < sm.length; i++) {
-    auto f0 = sm[i].get<Mat<double> >("f0");
-    auto f1 = sm[i].getS<double>("f1");
-    auto f2 = sm[i].getS<int32_t>("f2");
-    auto f3 = str(sm[i].field("f3"));
+    Mat<double> f0 = sm[i].get<Mat<double> >("f0"); 
+    double      f1 = sm[i].getS<double>("f1");
+    int32_t     f2 = sm[i].getS<int32_t>("f2");
+    std::string f3 = sm[i].getS<std::string>("f3");
     mexPrintf("Entry %d had f0 = [%d x %d] f1 = %g f2 = %d f3 = %s\n", i, f0.N, f0.M, f1, f2, f3.c_str());
   }
 
@@ -88,7 +88,11 @@ void mexFunction(int nOut, mxArray *pOut[], int nIn, const mxArray *pIn[]) {
   mexPrintf("Cell matrix output created.\n");
   pOut[oCellMat] = ocm;
 
-  StructMat osm(2, 1, {"bar", "quuz"});
+  // No C++11 features
+  std::vector<std::string> fns;
+  fns.push_back("bar");
+  fns.push_back("quuz");
+  StructMat osm(2, 1, fns); 
   osm[0].set("bar", Mat<double>(3,3));
   osm[0].setS("quuz", 1);
   osm[1].set(0, Mat<double>(2,2));
