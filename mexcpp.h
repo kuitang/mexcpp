@@ -8,9 +8,12 @@
  * is planned.
  *
  * TODO: Support complex!
+ *     : Fix size_t and mwIndex. (mxGetN is size_t but everything else mwIndx)
  *
+ * Version 0.3 -- added sparse matrices to ordinary interface
  * Version 0.2 -- compiles on 4.6.3, no C++11 needed. scalar supports string.
- * Copyright (c) 2013 Kui Tang <kuitang@gmail.com>
+ *
+ * Copyright (c) 2013-4 Kui Tang <kuitang@gmail.com>
  *
  * Inspired by Rcpp and nr3matlab.h
  */
@@ -124,24 +127,30 @@ namespace mexcpp {
   // TODO: Check the generated code
   struct BaseMat {
     // M is rows, N is cols
+    mxArray *pm;
     size_t N, M, length;
+    bool owned;
 
-    BaseMat(const mxArray *p) : pm(const_cast<mxArray *>(p)) {
+    BaseMat(const mxArray *p) : pm(const_cast<mxArray *>(p)), owned(false) {
       //mexPrintf("BaseMat: p = %lx\n", p);
       M = mxGetM(p);
       N = mxGetN(p);
       length = N * M;
     }
 
-    BaseMat(size_t M_, size_t N_) : pm(0), M(M_), N(N_), length(N_ * M_) { }
+    BaseMat(size_t M_, size_t N_, bool owned_=false) :
+      pm(0), M(M_), N(N_), length(N_ * M_), owned(owned_) { }
+
+    ~BaseMat() {
+      if (owned) {
+        mxDestroyArray(pm);
+      }
+    }
 
     // Conversion cast operator
     operator mxArray *() { return pm; }
 
     inline size_t sub2ind(size_t r, size_t c) { return c*M + r; }
-
-  protected:
-    mxArray *pm;
   };
 
   // TODO: Specialize for a complex!
@@ -157,7 +166,7 @@ namespace mexcpp {
     }
 
     // Construct our own (in MATLAB's memory)
-    Mat(size_t rows, size_t cols) : BaseMat(rows, cols) {
+    Mat(size_t rows, size_t cols, bool owned_=false) : BaseMat(rows, cols, owned_) {
       pm = mxCreateNumericMatrix(rows, cols, ty<T>(), mxREAL);
       re = static_cast<T *>(mxGetData(pm));
     }
@@ -169,6 +178,7 @@ namespace mexcpp {
       std::copy(p, p + rows*cols, re);
     }
 
+    // TODO: Figure out correct ownership semantics.
     // Construct from existing std::vector (copy to MATLAB's memory)
     Mat(const std::vector<T> v, bool colMat=true) : BaseMat(0, 0) {
       length = v.size();
@@ -184,7 +194,6 @@ namespace mexcpp {
       re = static_cast<T *>(mxGetData(pm));
       std::copy(v.data(), v.data() + v.size(), re);
     }
-
 
     // Pointer cast operator. Only defined for numeric arrays.
     // Allows usage in cases where e.g. double *vec is expected
@@ -202,7 +211,7 @@ namespace mexcpp {
     CellMat(const mxArray *p) : BaseMat(p) { checkTypeOrErr<mxCell>(p); }
 
     // Construct our own (in MATLAB's memory)
-    CellMat(size_t rows, size_t cols) : BaseMat(rows, cols) {
+    CellMat(size_t rows, size_t cols, bool owned_=false) : BaseMat(rows, cols, owned_) {
       pm = mxCreateCellMatrix(rows, cols);
     }
 
@@ -216,11 +225,11 @@ namespace mexcpp {
     template<class S>
     void setS(size_t r, size_t c, const S &x) { setS(sub2ind(r, c), x); }
 
-    mxArray *ptr(size_t ind) { return mxGetCell(pm, ind); }
-    mxArray *ptr(size_t r, size_t c) { return ptr(sub2ind(r, c)); }
+    mxArray *ptr(size_t ind) const { return mxGetCell(pm, ind); }
+    mxArray *ptr(size_t r, size_t c) const { return ptr(sub2ind(r, c)); }
 
-    CellT operator[](size_t ind) { return CellT(ptr(ind)); }
-    CellT operator()(size_t r, size_t c) { return CellT(ptr(sub2ind(r, c))); }
+    CellT operator[](size_t ind) const { return CellT(ptr(ind)); }
+    CellT operator()(size_t r, size_t c) const { return CellT(ptr(sub2ind(r, c))); }
   };
 
   // For use in classMat and classNDArray. Just stores a pointer to
@@ -281,8 +290,11 @@ namespace mexcpp {
       nFields = mxGetNumberOfFields(p);
     }
 
-    StructMat(size_t rows, size_t cols, std::vector<std::string> fieldNames) :
-      BaseMat(rows, cols) {
+    StructMat(size_t rows,
+              size_t cols,
+              std::vector<std::string> fieldNames,
+              bool owned_=false) :
+      BaseMat(rows, cols, owned_) {
       nFields = fieldNames.size();
       const char *fns[nFields];
 
@@ -320,31 +332,54 @@ namespace mexcpp {
 
   // Compressed sparse column sparse matrix (MATLAB's format)
   struct SparseMat : public BaseMat {
-    void construct(const mxArray *pm) {
+    size_t nzMax;
+    double *pr;
+    mwIndex *ir, *jc;
+
+    // Construct from MATLAB pointer
+    SparseMat(mxArray *pm) : BaseMat(pm) {
       if (!mxIsDouble(pm) || !mxIsSparse(pm)) {
         mexErrMsgIdAndTxt("SparseMat:type", "matrix pm must be double and sparse");
       }
 
-      N = mxGetN(pm);
-      M = mxGetM(pm);
-      nzMax = mxGetNzmax(pm);
+      setPointers();
+      setSizes();
+    }
+
+    // Construct our own (in MATLAB's memory, I believe, but not positive).
+    SparseMat(size_t rows,
+              size_t cols,
+              size_t nzMax,
+              bool owned_=false) : BaseMat(rows, cols, owned_) {
+      pm = mxCreateSparse(rows, cols, nzMax, mxREAL);
+      setPointers();
+    }
+
+    // TODO: Support the 5-argument call
+    // TODO: Determine whether mexCallMATLAB can alter the arguments. I don't think so.
+    // Construct from iVec/jVec/wVec format.
+    SparseMat(Mat<double> &iVec,
+              Mat<double> &jVec,
+              Mat<double> &wVec,
+              bool owned_=false) : BaseMat(0, 0, owned_) {
+      mxArray *lhs[] = { pm };
+      mxArray *rhs[] = { iVec.pm, jVec.pm, wVec.pm };
+      mexCallMATLAB(1, lhs, 5, rhs, "sparse");
+      setPointers();
+      setSizes();
+    }
+
+  private:
+    void setPointers() {
       pr = mxGetPr(pm);
       ir = mxGetIr(pm);
       jc = mxGetJc(pm);
     }
 
-    size_t nzMax;
-    double *pr;
-    mwIndex *ir, *jc;
-
-    // Grab from MATLAB
-    SparseMat(mxArray *pm) : BaseMat(pm) { construct(pm); }
-
-    // Construct our own
-    SparseMat(size_t rows, size_t cols, size_t nnz) :
-      BaseMat(rows, cols) {
-      pm = mxCreateSparse(rows, cols, nnz, mxREAL);
-      construct(pm);
+    void setSizes() {
+      N = mxGetN(pm);
+      M = mxGetM(pm);
+      nzMax = mxGetNzmax(pm);
     }
   };
 
