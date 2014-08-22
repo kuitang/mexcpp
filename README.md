@@ -21,10 +21,18 @@ integration for Eigen and/or Armadillo should not be difficult.
 # Requirements
 This project is in its infancy, but since the basic functionality
 works, I wanted to share it as soon as possible. You will need a
-compiler which supports a reasonable amount of C++11.  I developed
-and tested this package on Mac OS X 10.8 with Apple clang version
-4.1 and MATALB R2011b. Let me know if you run into trouble on your
-platform.
+fairly recent C++ compiler and MATLAB installation. I personally
+use this library with
+
+ - Mac OS X 10.8 with
+   - MATLAB R2011b
+   - Apple LLVM version 5.1 (clang-503.0.40) (based on LLVM 3.4svn)
+ - Linux 3.2.0-64 with
+   - MATLAB R2012b
+   - g++ (Ubuntu/Linaro 4.6.3-1ubuntu5) 4.6.3
+
+Please let me know if you get this working on a different platform,
+or if you're having trouble.
 
 # Usage
 To use, just `#include "mexcpp.h"`.  For a full list of examples,
