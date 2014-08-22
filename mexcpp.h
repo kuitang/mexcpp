@@ -10,6 +10,8 @@
  * TODO: Support complex!
  *     : Fix size_t and mwIndex. (mxGetN is size_t but everything else mwIndx)
  *
+ * Version 0.4 -- added copy constructor to Mat and CTRL-C catcher
+ *             -- added const-correct &operator[], &operator(), and *col methods.
  * Version 0.3 -- added sparse matrices to ordinary interface
  * Version 0.2 -- compiles on 4.6.3, no C++11 needed. scalar supports string.
  *
@@ -20,17 +22,57 @@
 
 #pragma once
 #include <algorithm>
-#include <cmath>
-#include <stdint.h>
+//#include <cmath>
+#include <cstdint>
 #include <complex>
 #include <exception>
 #include <vector>
 #include <string>
 
+#include <signal.h>
+
 #include "mex.h"
 #include "matrix.h"
 
+
 namespace mexcpp {
+  /* * Ctrl-C signal catching infrastructure * */
+  // RAII to change/restore signal handlers.
+  // To use, instatiate before the main computation loop and check the
+  // interrupted field at each loop iteration.
+  // Based on http://linuxtoosx.blogspot.com/2010/10/ctrl-c-signal-catching-from-c-program.html
+  struct SigintHandler {
+    struct sigaction sa, osa;
+    static short interrupted;
+    // protect against multiple instantiations; cheaper singleton
+    // static int allocs; = 0;
+
+    static void sigprocCtrlC(int sig) {
+      interrupted = 1;
+      mexErrMsgTxt("Ctrl-C caught in mex file; interrupted");
+    }
+
+    SigintHandler() {
+      sa.sa_handler = sigprocCtrlC;
+      sigaction(SIGINT, &sa, &osa);
+    }
+
+    ~SigintHandler() {
+      sigaction(SIGINT, &osa, &sa);
+    }
+
+  };
+
+  short SigintHandler::interrupted = 0;
+
+  /* Global variables for storing the signal handlers */
+  // Call before the main computation loop
+  void saveSigact() {
+  }
+
+  // Call before returning to MATLAB
+  void restoreSigact() {
+  }
 
   // Template nonsense for MATLAB types
   template<class T> inline mxClassID ty() {return mxUNKNOWN_CLASS;}
@@ -70,6 +112,9 @@ namespace mexcpp {
 #endif
 
   // Scalar library
+  // These are NOT memory managed, because they are not classes!
+  // If you are not directly putting them into pRhs, make sure to call
+  // mxDestroyArray.
 
   // Extract a scalar from a MATLAB pointer
   template<class T>
@@ -108,30 +153,15 @@ namespace mexcpp {
     return ret;
   }
 
-  // TODO: Check for memory allocation error (when running outside of
-  // mexFunction)
-  template<class T> mxArray *createScalar(T x) {
-    mxArray *ret = mxCreateNumericMatrix(1, 1, ty<T>());
-    *(static_cast<T *>(mxGetData(ret))) = x;
-    return ret;
-  }
-
-  template<> mxArray *createScalar<double>(double x) {
-    return mxCreateDoubleScalar(x);
-  }
-
-  template<> mxArray *createScalar<bool>(bool x) {
-    return mxCreateLogicalScalar(x);
-  }
-
   // TODO: Check the generated code
   struct BaseMat {
     // M is rows, N is cols
     mxArray *pm;
     size_t N, M, length;
+    // Do *I* own the memory, or does MATLAB?
     bool owned;
 
-    BaseMat(const mxArray *p) : pm(const_cast<mxArray *>(p)), owned(false) {
+    BaseMat(const mxArray *p, bool owned_=false) : pm(const_cast<mxArray *>(p)), owned(owned_) {
       //mexPrintf("BaseMat: p = %lx\n", p);
       M = mxGetM(p);
       N = mxGetN(p);
@@ -150,7 +180,7 @@ namespace mexcpp {
     // Conversion cast operator
     operator mxArray *() { return pm; }
 
-    inline size_t sub2ind(size_t r, size_t c) { return c*M + r; }
+    inline size_t sub2ind(size_t r, size_t c) const { return c*M + r; }
   };
 
   // TODO: Specialize for a complex!
@@ -160,7 +190,7 @@ namespace mexcpp {
     T *re;
 
     // Construct from MATLAB pointer
-    Mat(const mxArray *p) : BaseMat(p) {
+    Mat(const mxArray *p, bool owned_=false) : BaseMat(p, owned_) {
       checkTypeOrErr<T>(p);
       re = static_cast<T *>(mxGetData(p));
     }
@@ -172,15 +202,22 @@ namespace mexcpp {
     }
 
     // Construct from existing array (copy to MATLAB's memory)
-    Mat(size_t rows, size_t cols, T *p) : BaseMat(rows, cols) {
+    Mat(size_t rows, size_t cols, T *p, bool owned_=false) : BaseMat(rows, cols, owned_) {
       pm = mxCreateNumericMatrix(rows, cols, ty<T>(), mxREAL);
       re = static_cast<T *>(mxGetData(pm));
       std::copy(p, p + rows*cols, re);
     }
 
+    // Copy constructor (matlab owns)
+    Mat(const Mat<T> &m, bool owned_=false) : BaseMat(m.M, m.N, owned) {
+      pm = mxCreateNumericMatrix(m.M, m.N, ty<T>(), mxREAL);
+      re = static_cast<T *>(mxGetData(pm));
+      std::copy(m.re, m.re + m.length, re);
+    }
+
     // TODO: Figure out correct ownership semantics.
     // Construct from existing std::vector (copy to MATLAB's memory)
-    Mat(const std::vector<T> v, bool colMat=true) : BaseMat(0, 0) {
+    Mat(const std::vector<T> v, bool colMat=true, bool owned_=false) : BaseMat(0, 0, owned_) {
       length = v.size();
       if (colMat) {
         M = length;
@@ -203,15 +240,19 @@ namespace mexcpp {
     T *col(size_t c) { return re + sub2ind(0, c); }
     T &operator[](size_t ind) { return re[ind]; }
     T &operator()(size_t r, size_t c) { return re[sub2ind(r,c)]; }
+
+    const T *col(size_t c) const { return re + sub2ind(0, c); }
+    const T &operator[](size_t ind) const { return re[ind]; }
+    const T &operator()(size_t r, size_t c) const { return re[sub2ind(r,c)]; }
   };
 
   // Homogeneous cell array (Mat, CellMat, classMat, etc.)
   template<class CellT>
   struct CellMat : public BaseMat {
-    CellMat(const mxArray *p) : BaseMat(p) { checkTypeOrErr<mxCell>(p); }
+    CellMat(const mxArray *p, bool owned_=false) : BaseMat(p, owned_) { checkTypeOrErr<mxCell>(p); }
 
     // Construct our own (in MATLAB's memory)
-    CellMat(size_t rows, size_t cols, bool owned_=false) : BaseMat(rows, cols, owned_) {
+    CellMat(size_t rows, size_t cols, bool owned_) : BaseMat(rows, cols, owned_) {
       pm = mxCreateCellMatrix(rows, cols);
     }
 
@@ -285,7 +326,7 @@ namespace mexcpp {
   struct StructMat : public BaseMat {
     size_t nFields;
 
-    StructMat(const mxArray *p) : BaseMat(p) {
+    StructMat(const mxArray *p, bool owned_) : BaseMat(p, owned_) {
       checkTypeOrErr<mxStruct>(p);
       nFields = mxGetNumberOfFields(p);
     }
@@ -355,16 +396,31 @@ namespace mexcpp {
       setPointers();
     }
 
-    // TODO: Support the 5-argument call
     // TODO: Determine whether mexCallMATLAB can alter the arguments. I don't think so.
     // Construct from iVec/jVec/wVec format.
     SparseMat(Mat<double> &iVec,
               Mat<double> &jVec,
               Mat<double> &wVec,
+              size_t N=-1,
+              size_t M=-1,
               bool owned_=false) : BaseMat(0, 0, owned_) {
-      mxArray *lhs[] = { pm };
-      mxArray *rhs[] = { iVec.pm, jVec.pm, wVec.pm };
-      mexCallMATLAB(1, lhs, 5, rhs, "sparse");
+      mxArray *lhs[1];
+      int ret;
+      if (N == -1 || M == -1) {
+        // 3 argument call
+        mxArray *rhs[] = { iVec.pm, jVec.pm, wVec.pm };
+        ret = mexCallMATLAB(1, lhs, 3, rhs, "sparse");
+      } else {
+        mxArray *rhs[] = { iVec.pm, jVec.pm, wVec.pm, scalar(double(N)), scalar(double(M)) };
+        ret = mexCallMATLAB(1, lhs, 5, rhs, "sparse");
+        // Destroy the new new scalars we made
+        mxDestroyArray(rhs[3]);
+        mxDestroyArray(rhs[4]);
+      }
+
+      mxAssert(ret == 0, "mexCallMATLAB failed.");
+      pm = lhs[0];
+
       setPointers();
       setSizes();
     }
