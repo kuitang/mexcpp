@@ -3,6 +3,11 @@
 #include "mexcpp.h"
 #include <string>
 
+#ifdef HAVE_EIGEN
+#include <Eigen/Dense>
+#include <sstream>
+#endif
+
 enum {
   iDouble,
   iChar,
@@ -53,6 +58,20 @@ void mexFunction(int nOut, mxArray *pOut[], int nIn, const mxArray *pIn[]) {
   Mat<float> m(pIn[iSingleMatrix]);
   mexPrintf("Single matrix read; N = %d, M = %d, end = %g\n", m.N, m.M, m(m.N - 1, m.M - 1));
 
+#ifdef HAVE_EIGEN
+  std::stringstream ss;
+  const Mat<float>::EigenMap mEigenMap(m.asEigenMap());
+  ss << "mEigenMap contents: \n" << mEigenMap << "\n";
+  mexPrintf(ss.str().c_str());
+  ss.str("");
+
+  Mat<float>::EigenMatrix mEigenMat(m.asEigenMatrix());
+  ss << "mEigenMatrix contents: \n" << mEigenMap << "\n";
+  mexPrintf(ss.str().c_str());
+  ss.str() = "";
+
+#endif
+
   CellMat<Mat<double> > cm(pIn[iCellMat]);
   mexPrintf("Cell matrix read; N = %d, M = %d\n", cm.N, cm.M);
 
@@ -63,7 +82,7 @@ void mexFunction(int nOut, mxArray *pOut[], int nIn, const mxArray *pIn[]) {
   StructMat sm(pIn[iStructMat]);
   mexPrintf("Structure matrix read; N = %d, M = %d, nFields = %d\n", sm.N, sm.M, sm.nFields);
   for (int i = 0; i < sm.length; i++) {
-    Mat<double> f0 = sm[i].get<Mat<double> >("f0"); 
+    Mat<double> f0 = sm[i].get<Mat<double> >("f0");
     double      f1 = sm[i].getS<double>("f1");
     int32_t     f2 = sm[i].getS<int32_t>("f2");
     std::string f3 = sm[i].getS<std::string>("f3");
@@ -81,6 +100,12 @@ void mexFunction(int nOut, mxArray *pOut[], int nIn, const mxArray *pIn[]) {
   pOut[oDoubleMatrix] = om;
   mexPrintf("Double matrix output created.\n");
 
+#ifdef HAVE_EIGEN
+  Mat<double>::EigenMap omEigenMap(om.asEigenMap());
+  omEigenMap(0,0) += 0.1;
+  mexPrintf("Created (nonconst) EigenMap on output matrix and manipulated it.");
+#endif
+
   CellMat<Mat<double> > ocm(1,2);
   ocm.setS(0, 5.1);
   ocm.set(1, Mat<double>(3, 3));
@@ -92,7 +117,7 @@ void mexFunction(int nOut, mxArray *pOut[], int nIn, const mxArray *pIn[]) {
   std::vector<std::string> fns;
   fns.push_back("bar");
   fns.push_back("quuz");
-  StructMat osm(2, 1, fns); 
+  StructMat osm(2, 1, fns);
   osm[0].set("bar", Mat<double>(3,3));
   osm[0].setS("quuz", 1);
   osm[1].set(0, Mat<double>(2,2));

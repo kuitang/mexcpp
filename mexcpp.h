@@ -10,6 +10,7 @@
  * TODO: Support complex!
  *     : Fix size_t and mwIndex. (mxGetN is size_t but everything else mwIndx)
  *
+ * Version 0.5 -- Added basic Eigen support.
  * Version 0.4 -- added copy constructor to Mat and CTRL-C catcher
  *             -- added const-correct &operator[], &operator(), and *col methods.
  * Version 0.3 -- added sparse matrices to ordinary interface
@@ -22,7 +23,6 @@
 
 #pragma once
 #include <algorithm>
-//#include <cmath>
 #include <cstdint>
 #include <complex>
 #include <exception>
@@ -30,6 +30,10 @@
 #include <string>
 
 #include <signal.h>
+
+#ifdef HAVE_EIGEN
+#include <Eigen/Dense>
+#endif
 
 #include "mex.h"
 #include "matrix.h"
@@ -236,6 +240,22 @@ namespace mexcpp {
     // Allows usage in cases where e.g. double *vec is expected
     operator T*() { return re; }
 
+#ifdef HAVE_EIGEN
+    typedef Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> EigenMatrix;
+    typedef Eigen::Map<EigenMatrix> EigenMap;
+
+    // Copies
+    EigenMatrix asEigenMatrix() {
+      EigenMatrix m(M, N);
+      std::copy(re, re + length, m.data());
+      return m;
+    }
+
+    EigenMap asEigenMap() {
+      return EigenMap(re, M, N);
+    }
+#endif
+
     // NO RANGE CHECKING!
     T *col(size_t c) { return re + sub2ind(0, c); }
     T &operator[](size_t ind) { return re[ind]; }
@@ -252,7 +272,7 @@ namespace mexcpp {
     CellMat(const mxArray *p, bool owned_=false) : BaseMat(p, owned_) { checkTypeOrErr<mxCell>(p); }
 
     // Construct our own (in MATLAB's memory)
-    CellMat(size_t rows, size_t cols, bool owned_) : BaseMat(rows, cols, owned_) {
+    CellMat(size_t rows, size_t cols, bool owned_=false) : BaseMat(rows, cols, owned_) {
       pm = mxCreateCellMatrix(rows, cols);
     }
 
@@ -326,7 +346,7 @@ namespace mexcpp {
   struct StructMat : public BaseMat {
     size_t nFields;
 
-    StructMat(const mxArray *p, bool owned_) : BaseMat(p, owned_) {
+    StructMat(const mxArray *p, bool owned_=false) : BaseMat(p, owned_) {
       checkTypeOrErr<mxStruct>(p);
       nFields = mxGetNumberOfFields(p);
     }
