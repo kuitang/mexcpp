@@ -1,5 +1,14 @@
-// Run this line in MATLAB:
-// [od, os, ocm, osm] = mexcpp_test(3, 'c', 'string', [1 2 3], single([1 2; 3 4]), {[1 2], [1 2; 3 4]}, struct('f0', [10 20; 30 40], 'f1', 52, 'f2', int32(99), 'f3', 'blahblah'))
+/* mexcpp_test.cpp -- Test mexcpp library
+ *
+ * Copyright (c) 2013-5 Kui Tang <kuitang@gmail.com>
+ * License: MIT
+ *
+ * Inspired by Rcpp and nr3matlab.h
+ *
+ * Run this line in MATLAB:
+ * [od, os, ocm, osm] = mexcpp_test(3, 'c', 'string', [1 2 3], single([1 2; 3 4]), {[1 2], [1 2; 3 4]}, struct('f0', [10 20; 30 40], 'f1', 52, 'f2', int32(99), 'f3', 'blahblah'))
+ */
+
 #include "mexcpp.h"
 #include <string>
 

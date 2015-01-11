@@ -1,5 +1,10 @@
 /* mexcpp.h -- Seamless MATLAB and C++ Integration
  *
+ * Copyright (c) 2013-5 Kui Tang <kuitang@gmail.com>
+ * License: MIT
+ *
+ * Inspired by Rcpp and nr3matlab.h
+ *
  * This file wraps MATLAB datatypes (arrays, classures, cell arrays) in C++
  * template classes. Numeric arrays can be further wrapped into Eigen.
  *
@@ -10,15 +15,13 @@
  * TODO: Support complex!
  *     : Fix size_t and mwIndex. (mxGetN is size_t but everything else mwIndx)
  *
- * Version 0.5 -- Added basic Eigen support.
+ * Version 0.5.1 -- Added MIT License.
+ * Version 0.5 -- Added basic Eigen support; compile with -DHAVE_EIGEN.
  * Version 0.4 -- added copy constructor to Mat and CTRL-C catcher
  *             -- added const-correct &operator[], &operator(), and *col methods.
  * Version 0.3 -- added sparse matrices to ordinary interface
  * Version 0.2 -- compiles on 4.6.3, no C++11 needed. scalar supports string.
  *
- * Copyright (c) 2013-4 Kui Tang <kuitang@gmail.com>
- *
- * Inspired by Rcpp and nr3matlab.h
  */
 
 #pragma once
